@@ -55,6 +55,7 @@ set(TMP_SOURCES )
 add_folder(main)
 add_folder(render)
 add_folder(engine)
+add_folder(utils)
 add_folder(3rd_party/imgui)
 
 set(EXE_SOURCES ${EXE_SOURCES} ${SRC_ROOT}/3rd_party/glad/glad.c)

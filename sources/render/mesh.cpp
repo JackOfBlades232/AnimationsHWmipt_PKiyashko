@@ -59,7 +59,7 @@ MeshPtr create_mesh(const std::vector<unsigned int> &indices, const Channel&... 
 }
 
 
-MeshPtr create_mesh(const aiMesh *mesh)
+LoadMeshResult create_mesh(const aiMesh *mesh)
 {
   std::vector<uint32_t> indices;
   std::vector<vec3> vertices;
@@ -67,6 +67,8 @@ MeshPtr create_mesh(const aiMesh *mesh)
   std::vector<vec2> uv;
   std::vector<vec4> weights;
   std::vector<uvec4> weightsIndex;
+
+  SkeletonDataPtr skeletonData;
 
   int numVert = mesh->mNumVertices;
   int numFaces = mesh->mNumFaces;
@@ -105,6 +107,8 @@ MeshPtr create_mesh(const aiMesh *mesh)
 
   if (mesh->HasBones())
   {
+    skeletonData = std::make_shared<SkeletonData>(mesh->mBones, mesh->mNumBones);
+
     weights.resize(numVert, vec4(0.f));
     weightsIndex.resize(numVert);
     int numBones = mesh->mNumBones;
@@ -130,24 +134,24 @@ MeshPtr create_mesh(const aiMesh *mesh)
       weights[i] *= 1.f / s;
     }
   }
-  return create_mesh(indices, vertices, normals, uv, weights, weightsIndex);
+  return LoadMeshResult{create_mesh(indices, vertices, normals, uv, weights, weightsIndex), skeletonData};
 }
 
-MeshPtr load_mesh(const char *path, int idx)
+LoadMeshResult load_mesh(const char *path, int idx)
 {
-
   Assimp::Importer importer;
   importer.SetPropertyBool(AI_CONFIG_IMPORT_FBX_PRESERVE_PIVOTS, false);
   importer.SetPropertyFloat(AI_CONFIG_GLOBAL_SCALE_FACTOR_KEY, 1.f);
 
   importer.ReadFile(path, aiPostProcessSteps::aiProcess_Triangulate | aiPostProcessSteps::aiProcess_LimitBoneWeights |
-    aiPostProcessSteps::aiProcess_GenNormals | aiProcess_GlobalScale | aiProcess_FlipWindingOrder);
+    aiPostProcessSteps::aiProcess_GenNormals | aiPostProcessSteps::aiProcess_GlobalScale | aiPostProcessSteps::aiProcess_FlipWindingOrder |
+    aiPostProcessSteps::aiProcess_PopulateArmatureData);
 
   const aiScene* scene = importer.GetScene();
   if (!scene)
   {
     debug_error("no asset in %s", path);
-    return nullptr;
+    return LoadMeshResult{};
   }
 
   return create_mesh(scene->mMeshes[idx]);

@@ -1,7 +1,8 @@
 #pragma once
+#include <utils/span.h>
+#include <assimp/scene.h>
 #include <map>
 #include <memory>
-
 
 struct Mesh
 {
@@ -14,9 +15,18 @@ struct Mesh
     {}
 };
 
-using MeshPtr = std::shared_ptr<Mesh>;
+using SkeletonData = Span<aiBone *>;
 
-MeshPtr load_mesh(const char *path, int idx);
+using MeshPtr = std::shared_ptr<Mesh>;
+using SkeletonDataPtr = std::shared_ptr<SkeletonData>;
+
+struct LoadMeshResult
+{
+  MeshPtr mesh;
+  SkeletonDataPtr skeleton;
+};
+
+LoadMeshResult load_mesh(const char *path, int idx);
 MeshPtr make_plane_mesh();
 
 void render(const MeshPtr &mesh);
