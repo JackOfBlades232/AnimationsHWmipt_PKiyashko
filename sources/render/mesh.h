@@ -1,32 +1,41 @@
 #pragma once
 #include <utils/span.h>
 #include <assimp/scene.h>
-#include <map>
+#include <glm/matrix.hpp>
 #include <memory>
+#include <vector>
 
 struct Mesh
 {
-  const uint32_t vertexArrayBufferObject;
-  const int numIndices;
-
-  Mesh(uint32_t vertexArrayBufferObject, int numIndices) :
-    vertexArrayBufferObject(vertexArrayBufferObject),
-    numIndices(numIndices)
-    {}
+  uint32_t vertexArrayBufferObject;
+  int numIndices;
 };
 
-using SkeletonData = Span<aiBone *>;
+struct Skeleton
+{
+  Span<aiBone *> skeleton;
+  std::vector<glm::mat4> boneTransforms;
+  uint32_t boneTransformsBufferObject;
+
+  Skeleton() = default;
+  Skeleton(Span<aiBone *> a_bones, uint32_t a_ssbo)
+    : skeleton(a_bones), boneTransforms(skeleton.size()), boneTransformsBufferObject(a_ssbo) {}
+
+  void UpdateTransforms();
+  void UpdateGpuData();
+};
+
+struct RiggedMesh
+{
+  Mesh mesh;
+  Skeleton skeleton;
+};
 
 using MeshPtr = std::shared_ptr<Mesh>;
-using SkeletonDataPtr = std::shared_ptr<SkeletonData>;
+using RiggedMeshPtr = std::shared_ptr<RiggedMesh>;
 
-struct LoadMeshResult
-{
-  MeshPtr mesh;
-  SkeletonDataPtr skeleton;
-};
-
-LoadMeshResult load_mesh(const char *path, int idx);
+MeshPtr load_mesh(const char *path, int idx);
 MeshPtr make_plane_mesh();
+RiggedMeshPtr load_rigged_mesh(const char *path, int idx);
 
-void render(const MeshPtr &mesh);
+void render(const Mesh &mesh);

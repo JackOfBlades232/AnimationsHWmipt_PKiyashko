@@ -21,6 +21,9 @@ public:
     assert(offset < m_size);
     return Span(m_data + offset, m_size - offset);
   }
+  
+  inline const T *get() const { return m_data; }
+  inline size_t size() const { return m_size; }
 
 private:
   T *m_data{nullptr};

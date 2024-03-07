@@ -101,6 +101,11 @@ public:
 	{
 		glUniform4fv(uniform_location, 1, glm::value_ptr(v));
   }
+
+	void bind_ssbo(uint32_t ssbo, uint32_t slot) const
+	{
+		glBindBufferBase(GL_SHADER_STORAGE_BUFFER, slot, ssbo);
+	}
 };
 
 using ShaderPtr = std::shared_ptr<Shader>;

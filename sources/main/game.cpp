@@ -15,7 +15,7 @@ struct UserCamera
 struct Character
 {
   glm::mat4 transform;
-  MeshPtr mesh;
+  RiggedMeshPtr rmesh;
   MaterialPtr material;
 };
 
@@ -62,11 +62,9 @@ void game_init()
   std::fflush(stdout);
   material->set_property("mainTex", create_texture2d(ROOT_PATH"resources/MotusMan_v55/MCG_diff.jpg"));
 
-  // @TODO: next step: hook up char with a drawable skeleton
-  LoadMeshResult loadRes = load_mesh(ROOT_PATH"resources/MotusMan_v55/MotusMan_v55.fbx", 0);
   scene->characters.emplace_back(Character{
     glm::identity<glm::mat4>(),
-    loadRes.mesh,
+    load_rigged_mesh(ROOT_PATH"resources/MotusMan_v55/MotusMan_v55.fbx", 0),
     std::move(material)
   });
   std::fflush(stdout);
@@ -95,7 +93,8 @@ void render_character(const Character &character, const mat4 &cameraProjView, ve
   shader.set_vec3("AmbientLight", light.ambient);
   shader.set_vec3("SunLight", light.lightColor);
 
-  render(character.mesh);
+  //shader.bind_ssbo(character.rmesh->skeleton.boneTransformsBufferObject, 0);
+  render(character.rmesh->mesh);
 }
 
 void game_render()
