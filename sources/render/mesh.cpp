@@ -7,6 +7,8 @@
 #include <log.h>
 #include "glad/glad.h"
 
+#include <cstring>
+
 
 static void create_indices(const std::vector<unsigned int> &indices)
 {
@@ -51,7 +53,7 @@ void Skeleton::UpdateTransforms()
 {
   for (size_t i = 0; i < boneTransforms.size(); i++)
   {
-    const aiBone *bone = skeleton[i];
+    const aiBone *bone = bones[i];
 
     // @TODO: use mOffsetMatrix of the bone?
     // This does rotation & pos
@@ -59,29 +61,42 @@ void Skeleton::UpdateTransforms()
     for (const aiNode *node = bone->mNode; node; node = node->mParent)
       transform = node->mTransformation * transform;
 
-    aiVector3D childrenCenter = aiVector3D();
-    for (size_t j = 0; j < bone->mNode->mNumChildren; j++) {
-      aiMatrix4x4 &transform = bone->mNode->mChildren[j]->mTransformation;
-      childrenCenter += aiVector3D(transform.a4, transform.b4, transform.c4) / transform.d4;
+    if (strstr(bone->mName.C_Str(), "UpLeg"))
+      transform *= aiMatrix4x4();
+
+    float scale = 0.1f;
+    if (bone->mNode->mNumChildren > 0) {
+      aiVector3D childrenCenter = aiVector3D();
+      for (size_t j = 0; j < bone->mNode->mNumChildren; j++) {
+        aiMatrix4x4 &childTransform = bone->mNode->mChildren[j]->mTransformation;
+        childrenCenter += aiVector3D(childTransform.a4, childTransform.b4, childTransform.c4);
+      }
+      childrenCenter /= bone->mNode->mNumChildren;
+      scale = childrenCenter.Length();
     }
-    childrenCenter /= bone->mNode->mNumChildren;
-    float scale = childrenCenter.Length();
 
     aiMatrix4x4 scaleMat;
-    transform *= aiMatrix4x4::Scaling(aiVector3D(0.f, 0.f, scale), scaleMat);
+    transform *= aiMatrix4x4::Scaling(aiVector3D(scale), scaleMat);
 
+    boneTransforms[i] = glm::mat4(
+      transform.a1, transform.b1, transform.c1, transform.d1,
+      transform.a2, transform.b2, transform.c2, transform.d2,
+      transform.a3, transform.b3, transform.c3, transform.d3,
+      transform.a4, transform.b4, transform.c4, transform.d4);
+    /*
     boneTransforms[i] = glm::mat4(
       transform.a1, transform.a2, transform.a3, transform.a4,
       transform.b1, transform.b2, transform.b3, transform.b4,
       transform.c1, transform.c2, transform.c3, transform.c4,
       transform.d1, transform.d2, transform.d3, transform.d4);
+      */
   }
 }
 
 void Skeleton::UpdateGpuData()
 {
   glBindBuffer(GL_SHADER_STORAGE_BUFFER, boneTransformsBufferObject);
-  glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, boneTransforms.size(), boneTransforms.data());
+  glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, sizeof(boneTransforms[0]) * boneTransforms.size(), boneTransforms.data());
   glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
 }
 
@@ -153,7 +168,6 @@ static void init_mesh(Mesh *out_mesh, const aiMesh *ai_mesh, bool use_bones = fa
     for (int i = 0; i < numBones; i++)
     {
       const aiBone *bone = ai_mesh->mBones[i];
-      //bonesMap[std::string(bone->mName.C_Str())] = i;
 
       for (unsigned j = 0; j < bone->mNumWeights; j++)
       {
@@ -186,7 +200,8 @@ static void init_skeleton(Skeleton *out_skeleton, const aiMesh *ai_mesh)
   out_skeleton->UpdateTransforms();
 
   glBindBuffer(GL_SHADER_STORAGE_BUFFER, bonesSsbo);
-  glBufferData(GL_SHADER_STORAGE_BUFFER, out_skeleton->boneTransforms.size(), out_skeleton->boneTransforms.data(), GL_DYNAMIC_DRAW /*@HUH? this is not thought out*/);
+  glBufferData(GL_SHADER_STORAGE_BUFFER, sizeof(out_skeleton->boneTransforms[0]) * out_skeleton->boneTransforms.size(), 
+    out_skeleton->boneTransforms.data(), GL_DYNAMIC_DRAW /*@HUH? this is not thought out*/);
   glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
 }
 
@@ -234,7 +249,20 @@ RiggedMeshPtr load_rigged_mesh(const char *path, int idx)
 void render(const Mesh &mesh)
 {
   glBindVertexArray(mesh.vertexArrayBufferObject);
-  glDrawElementsBaseVertex(GL_TRIANGLES, mesh.numIndices, GL_UNSIGNED_INT, 0, 0);
+  glDrawElements(GL_TRIANGLES, mesh.numIndices, GL_UNSIGNED_INT, 0);
+}
+
+void render_instanced(const Mesh &mesh, uint32_t cnt)
+{
+  glBindVertexArray(mesh.vertexArrayBufferObject);
+  glDrawElementsInstanced(GL_TRIANGLES, mesh.numIndices, GL_UNSIGNED_INT, 0, cnt);
+}
+
+MeshPtr make_mesh_from_data(std::vector<glm::vec4> &vert, std::vector<unsigned int> &ind)
+{
+  MeshPtr outMesh = std::make_shared<Mesh>();
+  init_mesh(outMesh.get(), ind, vert);
+  return outMesh;
 }
 
 MeshPtr make_plane_mesh()

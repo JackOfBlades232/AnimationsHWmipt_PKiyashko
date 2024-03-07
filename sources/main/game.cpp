@@ -5,6 +5,12 @@
 #include "camera.h"
 #include <application.h>
 
+enum RenderMode
+{
+  RMODE_REGULAR,
+  RMODE_BONES
+};
+
 struct UserCamera
 {
   glm::mat4 transform;
@@ -25,11 +31,40 @@ struct Scene
 
   UserCamera userCamera;
 
+  RenderMode rmode;
+
   std::vector<Character> characters;
 
 };
 
 static std::unique_ptr<Scene> scene;
+
+// @DEBUG: for all bones
+// @BAD: this has no business being vectors, just to easily plug into mesh api
+static std::vector<glm::vec4> bone_mesh_vert =
+{
+  {0.f,   0.f,    0.f,    1.f},
+  {0.07f, 0.f,    0.07f,  1.f},
+  {0.07f, 0.07f,  0.f,    1.f},
+  {0.07f, 0.f,    -0.07f, 1.f},
+  {0.07f, -0.07f, 0.f,    1.f},
+  {1.f,   0.f,    0.f,    1.f},
+};
+static std::vector<unsigned int> bone_mesh_ind =
+{
+  1, 2, 0,
+  2, 3, 0,
+  3, 4, 0,
+  4, 1, 0,
+  1, 5, 2,
+  2, 5, 3,
+  3, 5, 4,
+  4, 5, 1
+};
+
+static MeshPtr bone_mesh;
+static MaterialPtr bones_material;
+
 
 void game_init()
 {
@@ -39,6 +74,8 @@ void game_init()
   scene->light.ambient = glm::vec3(0.2f);
 
   scene->userCamera.projection = glm::perspective(90.f * DegToRad, get_aspect_ratio(), 0.01f, 500.f);
+
+  scene->rmode = RMODE_REGULAR;
 
   ArcballCamera &cam = scene->userCamera.arcballCamera;
   cam.curZoom = cam.targetZoom = 0.5f;
@@ -56,7 +93,13 @@ void game_init()
   input.onMouseButtonEvent += [](const SDL_MouseButtonEvent &e) { arccam_mouse_click_handler(e, scene->userCamera.arcballCamera); };
   input.onMouseMotionEvent += [](const SDL_MouseMotionEvent &e) { arccam_mouse_move_handler(e, scene->userCamera.arcballCamera); };
   input.onMouseWheelEvent += [](const SDL_MouseWheelEvent &e) { arccam_mouse_wheel_handler(e, scene->userCamera.arcballCamera); };
+  input.onKeyboardEvent += [](const SDL_KeyboardEvent &e) {
+    if (e.keysym.sym == SDLK_q && e.state == SDL_RELEASED && e.repeat == 0)
+      scene->rmode = scene->rmode == RMODE_REGULAR ? RMODE_BONES : RMODE_REGULAR;
+    };
 
+  bone_mesh = make_mesh_from_data(bone_mesh_vert, bone_mesh_ind);
+  bones_material = make_material("skeleton", ROOT_PATH"sources/shaders/bones.vert", ROOT_PATH"sources/shaders/bones.frag");
 
   auto material = make_material("character", ROOT_PATH"sources/shaders/character_vs.glsl", ROOT_PATH"sources/shaders/character_ps.glsl");
   std::fflush(stdout);
@@ -83,20 +126,38 @@ void game_update()
 
 void render_character(const Character &character, const mat4 &cameraProjView, vec3 cameraPosition, const DirectionLight &light)
 {
-  const Material &material = *character.material;
-  const Shader &shader = material.get_shader();
+  switch (scene->rmode) {
+  case RMODE_REGULAR:
+  {
+    const Material &material = *character.material;
+    const Shader &shader = material.get_shader();
 
-  shader.use();
-  material.bind_uniforms_to_shader();
-  shader.set_mat4x4("Transform", character.transform);
-  shader.set_mat4x4("ViewProjection", cameraProjView);
-  shader.set_vec3("CameraPosition", cameraPosition);
-  shader.set_vec3("LightDirection", glm::normalize(light.lightDirection));
-  shader.set_vec3("AmbientLight", light.ambient);
-  shader.set_vec3("SunLight", light.lightColor);
+    shader.use();
+    material.bind_uniforms_to_shader();
+    shader.set_mat4x4("Transform", character.transform);
+    shader.set_mat4x4("ViewProjection", cameraProjView);
+    shader.set_vec3("CameraPosition", cameraPosition);
+    shader.set_vec3("LightDirection", glm::normalize(light.lightDirection));
+    shader.set_vec3("AmbientLight", light.ambient);
+    shader.set_vec3("SunLight", light.lightColor);
 
-  //shader.bind_ssbo(character.rmesh->skeleton.boneTransformsBufferObject, 0);
-  render(character.rmesh->mesh);
+    render(character.rmesh->mesh);
+  } break;
+
+  case RMODE_BONES:
+  {
+    const Shader &bonesShader = bones_material->get_shader();
+    bonesShader.use();
+    bonesShader.bind_ssbo(character.rmesh->skeleton.boneTransformsBufferObject, 0);
+    bonesShader.set_mat4x4("RootTransform", character.transform);
+    bonesShader.set_mat4x4("ViewProjection", cameraProjView);
+
+    render_instanced(*bone_mesh, character.rmesh->skeleton.bones.size());
+  } break;
+
+  default:
+    break;
+  }
 }
 
 void game_render()
