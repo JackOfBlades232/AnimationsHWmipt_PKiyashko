@@ -60,7 +60,7 @@ void Skeleton::UpdateTransforms()
       transform = node->mTransformation * transform;
 
     aiVector3D childrenCenter = aiVector3D();
-    for (size_t j; j < bone->mNode->mNumChildren; j++) {
+    for (size_t j = 0; j < bone->mNode->mNumChildren; j++) {
       aiMatrix4x4 &transform = bone->mNode->mChildren[j]->mTransformation;
       childrenCenter += aiVector3D(transform.a4, transform.b4, transform.c4) / transform.d4;
     }
@@ -190,22 +190,18 @@ static void init_skeleton(Skeleton *out_skeleton, const aiMesh *ai_mesh)
   glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
 }
 
-const aiScene *load_ai_scene(const char *path)
-{
-  Assimp::Importer importer;
-  importer.SetPropertyBool(AI_CONFIG_IMPORT_FBX_PRESERVE_PIVOTS, false);
-  importer.SetPropertyFloat(AI_CONFIG_GLOBAL_SCALE_FACTOR_KEY, 1.f);
-
-  importer.ReadFile(path, aiPostProcessSteps::aiProcess_Triangulate | aiPostProcessSteps::aiProcess_LimitBoneWeights |
-    aiPostProcessSteps::aiProcess_GenNormals | aiPostProcessSteps::aiProcess_GlobalScale | aiPostProcessSteps::aiProcess_FlipWindingOrder |
-    aiPostProcessSteps::aiProcess_PopulateArmatureData);
-
-  return importer.GetScene();
-}
+#define AI_READ_SCENE(_importer, _path)                                              \
+  _importer ## .SetPropertyBool(AI_CONFIG_IMPORT_FBX_PRESERVE_PIVOTS, false);        \
+  _importer ## .SetPropertyFloat(AI_CONFIG_GLOBAL_SCALE_FACTOR_KEY, 1.f);            \
+  _importer ## .ReadFile(_path, aiProcess_Triangulate | aiProcess_LimitBoneWeights | \
+    aiProcess_GenNormals | aiProcess_GlobalScale | aiProcess_FlipWindingOrder |      \
+    aiProcess_CalcTangentSpace | aiProcess_PopulateArmatureData);
 
 MeshPtr load_mesh(const char *path, int idx)
 {
-  const aiScene* scene = load_ai_scene(path);
+  Assimp::Importer importer;
+  AI_READ_SCENE(importer, path);
+  const aiScene* scene = importer.GetScene();
   if (!scene)
   {
     debug_error("no asset in %s", path);
@@ -219,7 +215,10 @@ MeshPtr load_mesh(const char *path, int idx)
 
 RiggedMeshPtr load_rigged_mesh(const char *path, int idx)
 {
-  const aiScene* scene = load_ai_scene(path);
+  // @TODO: this could be pulled out
+  Assimp::Importer importer;
+  AI_READ_SCENE(importer, path);
+  const aiScene* scene = importer.GetScene();
   if (!scene)
   {
     debug_error("no asset in %s", path);

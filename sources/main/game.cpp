@@ -62,6 +62,8 @@ void game_init()
   std::fflush(stdout);
   material->set_property("mainTex", create_texture2d(ROOT_PATH"resources/MotusMan_v55/MCG_diff.jpg"));
 
+  auto mesh = load_mesh(ROOT_PATH"resources/MotusMan_v55/MotusMan_v55.fbx", 0);
+
   scene->characters.emplace_back(Character{
     glm::identity<glm::mat4>(),
     load_rigged_mesh(ROOT_PATH"resources/MotusMan_v55/MotusMan_v55.fbx", 0),
