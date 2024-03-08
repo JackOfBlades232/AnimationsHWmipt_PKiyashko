@@ -50,6 +50,15 @@ static std::vector<glm::vec4> bone_mesh_vert =
   {0.07f, -0.07f, 0.f,    1.f},
   {1.f,   0.f,    0.f,    1.f},
 };
+static std::vector<glm::vec4> bone_mesh_norm =
+{
+  {-1.f, 0.f,  0.f,  1.f},
+  {0.f,  0.f,  1.f,  1.f},
+  {0.f,  1.f,  0.f,  1.f},
+  {0.f,  0.f,  -1.f, 1.f},
+  {0.f,  -1.f, 0.f,  1.f},
+  {1.f,  0.f,  0.f,  1.f},
+};
 static std::vector<unsigned int> bone_mesh_ind =
 {
   1, 2, 0,
@@ -62,8 +71,27 @@ static std::vector<unsigned int> bone_mesh_ind =
   4, 5, 1
 };
 
+static std::vector<glm::vec4> axes_mesh_vert =
+{
+  {0.f, 0.f, 0.f, 1.f},
+  {.1f, 0.f, 0.f, 1.f},
+  {0.f, 0.f, 0.f, 1.f},
+  {0.f, .1f, 0.f, 1.f},
+  {0.f, 0.f, 0.f, 1.f},
+  {0.f, 0.f, .1f, 1.f},
+};
+// For ease of compatibility with mesh functions @TODO: improve
+static std::vector<unsigned int> axes_mesh_ind =
+{
+  0, 1,
+  2, 3,
+  4, 5
+};
+
 static MeshPtr bone_mesh;
 static MaterialPtr bones_material;
+static MeshPtr axes_mesh;
+static MaterialPtr axes_material;
 
 
 void game_init()
@@ -98,8 +126,10 @@ void game_init()
       scene->rmode = scene->rmode == RMODE_REGULAR ? RMODE_BONES : RMODE_REGULAR;
     };
 
-  bone_mesh = make_mesh_from_data(bone_mesh_vert, bone_mesh_ind);
+  bone_mesh = make_mesh_from_data(bone_mesh_vert, bone_mesh_ind, &bone_mesh_norm);
   bones_material = make_material("skeleton", ROOT_PATH"sources/shaders/bones.vert", ROOT_PATH"sources/shaders/bones.frag");
+  axes_mesh = make_mesh_from_data(axes_mesh_vert, axes_mesh_ind);
+  axes_material = make_material("axes", ROOT_PATH"sources/shaders/bone_points.vert", ROOT_PATH"sources/shaders/bone_points.frag");
 
   auto material = make_material("character", ROOT_PATH"sources/shaders/character_vs.glsl", ROOT_PATH"sources/shaders/character_ps.glsl");
   std::fflush(stdout);
@@ -147,12 +177,27 @@ void render_character(const Character &character, const mat4 &cameraProjView, ve
   case RMODE_BONES:
   {
     const Shader &bonesShader = bones_material->get_shader();
+    const Shader &axesShader = axes_material->get_shader();
+
     bonesShader.use();
+    bones_material->bind_uniforms_to_shader();
     bonesShader.bind_ssbo(character.rmesh->skeleton.boneTransformsBufferObject, 0);
     bonesShader.set_mat4x4("RootTransform", character.transform);
     bonesShader.set_mat4x4("ViewProjection", cameraProjView);
+    bonesShader.set_vec3("CameraPosition", cameraPosition);
+    bonesShader.set_vec3("LightDirection", glm::normalize(light.lightDirection));
+    bonesShader.set_vec3("AmbientLight", light.ambient);
+    bonesShader.set_vec3("SunLight", light.lightColor);
 
     render_instanced(*bone_mesh, character.rmesh->skeleton.bones.size());
+
+    axesShader.use();
+    axes_material->bind_uniforms_to_shader();
+    axesShader.bind_ssbo(character.rmesh->skeleton.boneOffsetsBufferObject, 0);
+    axesShader.set_mat4x4("RootTransform", character.transform);
+    axesShader.set_mat4x4("ViewProjection", cameraProjView);
+
+    render_instanced(*axes_mesh, character.rmesh->skeleton.bones.size(), LINES);
   } break;
 
   default:

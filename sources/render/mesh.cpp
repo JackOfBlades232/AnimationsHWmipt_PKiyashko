@@ -55,41 +55,34 @@ void Skeleton::UpdateTransforms()
   {
     const aiBone *bone = bones[i];
 
-    // @TODO: use mOffsetMatrix of the bone?
-    // This does rotation & pos
-    aiMatrix4x4 transform = aiMatrix4x4(); // identity
-    for (const aiNode *node = bone->mNode; node; node = node->mParent)
-      transform = node->mTransformation * transform;
+    aiMatrix4x4 localTransform = bone->mNode->mTransformation;
+    aiMatrix4x4 parentTransform;
+    for (const aiNode *node = bone->mNode->mParent; node; node = node->mParent)
+      parentTransform = node->mTransformation * parentTransform;
+    aiMatrix4x4 transform = parentTransform * localTransform;
 
-    if (strstr(bone->mName.C_Str(), "UpLeg"))
-      transform *= aiMatrix4x4();
-
-    float scale = 0.1f;
-    if (bone->mNode->mNumChildren > 0) {
-      aiVector3D childrenCenter = aiVector3D();
-      for (size_t j = 0; j < bone->mNode->mNumChildren; j++) {
-        aiMatrix4x4 &childTransform = bone->mNode->mChildren[j]->mTransformation;
-        childrenCenter += aiVector3D(childTransform.a4, childTransform.b4, childTransform.c4);
-      }
-      childrenCenter /= bone->mNode->mNumChildren;
-      scale = childrenCenter.Length();
-    }
-
-    aiMatrix4x4 scaleMat;
-    transform *= aiMatrix4x4::Scaling(aiVector3D(scale), scaleMat);
-
-    boneTransforms[i] = glm::mat4(
+    boneOffsets[i] = glm::mat4(
       transform.a1, transform.b1, transform.c1, transform.d1,
       transform.a2, transform.b2, transform.c2, transform.d2,
       transform.a3, transform.b3, transform.c3, transform.d3,
       transform.a4, transform.b4, transform.c4, transform.d4);
-    /*
+
+    aiVector3D tipOffset(localTransform.a4, localTransform.b4, localTransform.c4);
+    float scale = tipOffset.Length();
+    tipOffset.NormalizeSafe();
+
+    aiMatrix4x4 scaleMat;
+    aiMatrix4x4 rotationMat;
+    aiMatrix4x4 boneTransform = 
+      parentTransform *
+      aiMatrix4x4::FromToMatrix(aiVector3D(1.f, 0.f, 0.f), tipOffset, rotationMat) * 
+      aiMatrix4x4::Scaling(aiVector3D(scale), scaleMat);
+
     boneTransforms[i] = glm::mat4(
-      transform.a1, transform.a2, transform.a3, transform.a4,
-      transform.b1, transform.b2, transform.b3, transform.b4,
-      transform.c1, transform.c2, transform.c3, transform.c4,
-      transform.d1, transform.d2, transform.d3, transform.d4);
-      */
+      boneTransform.a1, boneTransform.b1, boneTransform.c1, boneTransform.d1,
+      boneTransform.a2, boneTransform.b2, boneTransform.c2, boneTransform.d2,
+      boneTransform.a3, boneTransform.b3, boneTransform.c3, boneTransform.d3,
+      boneTransform.a4, boneTransform.b4, boneTransform.c4, boneTransform.d4);
   }
 }
 
@@ -97,6 +90,8 @@ void Skeleton::UpdateGpuData()
 {
   glBindBuffer(GL_SHADER_STORAGE_BUFFER, boneTransformsBufferObject);
   glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, sizeof(boneTransforms[0]) * boneTransforms.size(), boneTransforms.data());
+  glBindBuffer(GL_SHADER_STORAGE_BUFFER, boneOffsetsBufferObject);
+  glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, sizeof(boneOffsets[0]) * boneOffsets.size(), boneOffsets.data());
   glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
 }
 
@@ -193,15 +188,19 @@ static void init_skeleton(Skeleton *out_skeleton, const aiMesh *ai_mesh)
 {
   assert(ai_mesh->HasBones()); // @TODO: more graceful?
   Span<aiBone *> bonesSpan(ai_mesh->mBones, ai_mesh->mNumBones);
-  uint32_t bonesSsbo;
+  uint32_t bonesSsbo, pointsSsbo;
 
   glGenBuffers(1, &bonesSsbo);
-  *out_skeleton = Skeleton(bonesSpan, bonesSsbo);
+  glGenBuffers(1, &pointsSsbo);
+  *out_skeleton = Skeleton(bonesSpan, bonesSsbo, pointsSsbo);
   out_skeleton->UpdateTransforms();
 
   glBindBuffer(GL_SHADER_STORAGE_BUFFER, bonesSsbo);
   glBufferData(GL_SHADER_STORAGE_BUFFER, sizeof(out_skeleton->boneTransforms[0]) * out_skeleton->boneTransforms.size(), 
     out_skeleton->boneTransforms.data(), GL_DYNAMIC_DRAW /*@HUH? this is not thought out*/);
+  glBindBuffer(GL_SHADER_STORAGE_BUFFER, pointsSsbo);
+  glBufferData(GL_SHADER_STORAGE_BUFFER, sizeof(out_skeleton->boneOffsets[0]) * out_skeleton->boneOffsets.size(), 
+    out_skeleton->boneOffsets.data(), GL_DYNAMIC_DRAW);
   glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
 }
 
@@ -210,7 +209,7 @@ static void init_skeleton(Skeleton *out_skeleton, const aiMesh *ai_mesh)
   _importer ## .SetPropertyFloat(AI_CONFIG_GLOBAL_SCALE_FACTOR_KEY, 1.f);            \
   _importer ## .ReadFile(_path, aiProcess_Triangulate | aiProcess_LimitBoneWeights | \
     aiProcess_GenNormals | aiProcess_GlobalScale | aiProcess_FlipWindingOrder |      \
-    aiProcess_CalcTangentSpace | aiProcess_PopulateArmatureData);
+    aiProcess_PopulateArmatureData);
 
 MeshPtr load_mesh(const char *path, int idx)
 {
@@ -246,22 +245,25 @@ RiggedMeshPtr load_rigged_mesh(const char *path, int idx)
   return rmeshHandle;
 }
 
-void render(const Mesh &mesh)
+void render(const Mesh &mesh, PrimitiveType pType)
 {
   glBindVertexArray(mesh.vertexArrayBufferObject);
-  glDrawElements(GL_TRIANGLES, mesh.numIndices, GL_UNSIGNED_INT, 0);
+  glDrawElements(pType, mesh.numIndices, GL_UNSIGNED_INT, 0);
 }
 
-void render_instanced(const Mesh &mesh, uint32_t cnt)
+void render_instanced(const Mesh &mesh, uint32_t cnt, PrimitiveType pType)
 {
   glBindVertexArray(mesh.vertexArrayBufferObject);
-  glDrawElementsInstanced(GL_TRIANGLES, mesh.numIndices, GL_UNSIGNED_INT, 0, cnt);
+  glDrawElementsInstanced(pType, mesh.numIndices, GL_UNSIGNED_INT, 0, cnt);
 }
 
-MeshPtr make_mesh_from_data(std::vector<glm::vec4> &vert, std::vector<unsigned int> &ind)
+MeshPtr make_mesh_from_data(std::vector<glm::vec4> &vert, std::vector<unsigned int> &ind, std::vector<glm::vec4> *norm)
 {
   MeshPtr outMesh = std::make_shared<Mesh>();
-  init_mesh(outMesh.get(), ind, vert);
+  if (norm)
+    init_mesh(outMesh.get(), ind, vert, *norm);
+  else
+    init_mesh(outMesh.get(), ind, vert);
   return outMesh;
 }
 
