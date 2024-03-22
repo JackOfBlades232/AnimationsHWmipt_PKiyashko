@@ -1,5 +1,4 @@
 #include "mesh.h"
-#include <vector>
 #include <3dmath.h>
 #include <assimp/scene.h>
 #include <assimp/Importer.hpp>
@@ -8,6 +7,9 @@
 #include "glad/glad.h"
 
 #include <cstring>
+
+#include <vector>
+#include <array>
 
 
 static glm::mat4 ai_to_glm_mat4(const aiMatrix4x4 &aiMatr)
@@ -20,17 +22,20 @@ static glm::mat4 ai_to_glm_mat4(const aiMatrix4x4 &aiMatr)
 }
 
 // @TODO(PKiyashko): should all this logic be in the constructor? For small meshes, seems fine
-Skeleton::Skeleton(Span<aiBone *> a_bones, GLuint a_tf_ssbo, GLuint a_p_ssbo)
-  : bones(a_bones.size()), boneRootTransforms(a_bones.size()), boneRootTransformsSSBO(a_tf_ssbo),
-    boneOffsets(a_bones.size()), boneOffsetsSSBO(a_p_ssbo) 
+Skeleton::Skeleton(Span<aiBone *> a_bones, GLuint a_loct_ssbo, GLuint a_tf_ssbo, GLuint a_p_ssbo)
+  : bones(a_bones.size()),
+  boneLocalTransforms(a_bones.size()), boneLocalTransformsSSBO(a_loct_ssbo),
+  boneRootTransforms(a_bones.size()), boneRootTransformsSSBO(a_tf_ssbo),
+  boneOffsets(a_bones.size()), boneOffsetsSSBO(a_p_ssbo) 
 {
   for (size_t i = 0; i < a_bones.size(); i++)
   {
     const aiBone *srcBone = a_bones[i];
     Bone &dstBone = bones[i];
 
-    dstBone.localTransform = ai_to_glm_mat4(srcBone->mNode->mTransformation);
+    boneLocalTransforms[i] = ai_to_glm_mat4(srcBone->mNode->mTransformation);
     dstBone.name = std::string(srcBone->mName.C_Str());
+    dstBone.id = i;
 
     dstBone.parent = nullptr;
     if (srcBone->mNode->mParent)
@@ -52,11 +57,9 @@ Skeleton::Skeleton(Span<aiBone *> a_bones, GLuint a_tf_ssbo, GLuint a_p_ssbo)
       {
         const aiNode *aiRoot = srcBone->mNode->mParent;
 
-        root.localTransform = ai_to_glm_mat4(aiRoot->mTransformation);
-        for (const aiNode *aiParent = aiRoot->mParent; aiParent; aiParent = aiParent->mParent)
-          root.localTransform = ai_to_glm_mat4(aiParent->mTransformation) * root.localTransform;
         root.name = std::string(aiRoot->mName.C_Str());
         root.parent = nullptr;
+        root.id = (size_t)(-1);
 
         dstBone.parent = &root;
       }
@@ -64,20 +67,24 @@ Skeleton::Skeleton(Span<aiBone *> a_bones, GLuint a_tf_ssbo, GLuint a_p_ssbo)
   }
 }
 
-void Skeleton::UpdateTransforms()
+void Skeleton::UpdateSkeletalData()
 {
   for (size_t i = 0; i < boneRootTransforms.size(); i++)
   {
     const Bone &bone = bones[i];
+    const glm::mat4 &localTransform = boneLocalTransforms[bone.id];
 
+    // @NOTE(PKiyashko): here it is presumed that the root node has ID transform in mesh space
     glm::mat4 parentTransform = glm::identity<glm::mat4>();
-    for (const Bone *bonep = bone.parent; bonep; bonep = bonep->parent)
-      parentTransform = bonep->localTransform * parentTransform;
-    parentTransform = root.localTransform * parentTransform;
+    for (const Bone *bonep = bone.parent; bonep != &root; bonep = bonep->parent)
+    {
+      assert(bonep);
+      parentTransform = boneLocalTransforms[bonep->id] * parentTransform;
+    }
 
-    boneOffsets[i] = parentTransform * bone.localTransform;
+    boneOffsets[i] = parentTransform * localTransform;
 
-    glm::vec3 tipOffset(bone.localTransform[3][0], bone.localTransform[3][1], bone.localTransform[3][2]);
+    glm::vec3 tipOffset(localTransform[3][0], localTransform[3][1], localTransform[3][2]);
     float scale = glm::length(tipOffset);
 
     // @NOTE(PKiyashko): the lookAtLH is OpenGL-specific (in fact, all of the code relies on assimp and opengl
@@ -89,8 +96,11 @@ void Skeleton::UpdateTransforms()
   }
 }
 
-void Skeleton::LoadGPUData()
+void Skeleton::LoadGPUData() const
 {
+  glBindBuffer(GL_SHADER_STORAGE_BUFFER, boneLocalTransformsSSBO);
+  glBufferData(GL_SHADER_STORAGE_BUFFER, sizeof(boneLocalTransforms[0]) * boneLocalTransforms.size(), 
+    boneLocalTransforms.data(), GL_DYNAMIC_DRAW);
   glBindBuffer(GL_SHADER_STORAGE_BUFFER, boneRootTransformsSSBO);
   glBufferData(GL_SHADER_STORAGE_BUFFER, sizeof(boneRootTransforms[0]) * boneRootTransforms.size(), 
     boneRootTransforms.data(), GL_DYNAMIC_DRAW);
@@ -100,8 +110,10 @@ void Skeleton::LoadGPUData()
   glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
 }
 
-void Skeleton::UpdateGPUData()
+void Skeleton::UpdateGPUData() const
 {
+  glBindBuffer(GL_SHADER_STORAGE_BUFFER, boneLocalTransformsSSBO);
+  glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, sizeof(boneLocalTransforms[0]) * boneLocalTransforms.size(), boneLocalTransforms.data());
   glBindBuffer(GL_SHADER_STORAGE_BUFFER, boneRootTransformsSSBO);
   glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, sizeof(boneRootTransforms[0]) * boneRootTransforms.size(), boneRootTransforms.data());
   glBindBuffer(GL_SHADER_STORAGE_BUFFER, boneOffsetsSSBO);
@@ -162,14 +174,12 @@ static MeshPtr make_mesh(const std::vector<unsigned int> &indices, const Channel
 }
 
 
-static MeshPtr make_mesh(const aiMesh *ai_mesh, bool use_bones = false)
+static MeshPtr make_regular_mesh(const aiMesh *ai_mesh)
 {
   std::vector<uint32_t> indices;
   std::vector<vec3> vertices;
   std::vector<vec3> normals;
   std::vector<vec2> uv;
-  std::vector<vec4> weights;
-  std::vector<uvec4> weightsIndex;
 
   int numVert = ai_mesh->mNumVertices;
   int numFaces = ai_mesh->mNumFaces;
@@ -206,34 +216,80 @@ static MeshPtr make_mesh(const aiMesh *ai_mesh, bool use_bones = false)
       uv[i] = to_vec2(ai_mesh->mTextureCoords[0][i]);
   }
 
-  if (use_bones && ai_mesh->HasBones())
-  {
-    weights.resize(numVert, vec4(0.f));
-    weightsIndex.resize(numVert);
-    int numBones = ai_mesh->mNumBones;
-    std::vector<int> weightsOffset(numVert, 0);
-    for (int i = 0; i < numBones; i++)
-    {
-      const aiBone *bone = ai_mesh->mBones[i];
+  return make_mesh(indices, vertices, normals, uv);
+}
 
-      for (unsigned j = 0; j < bone->mNumWeights; j++)
-      {
-        int vertex = bone->mWeights[j].mVertexId;
-        int offset = weightsOffset[vertex]++;
-        weights[vertex][offset] = bone->mWeights[j].mWeight;
-        weightsIndex[vertex][offset] = i;
-      }
-    }
-    //the sum of weights not 1
-    for (int i = 0; i < numVert; i++)
+static MeshPtr make_skinned_mesh(const aiMesh *ai_mesh)
+{
+  std::vector<uint32_t> indices;
+  std::array<std::vector<vec3>, 4> vertices;
+  std::array<std::vector<vec3>, 4> normals;
+  std::vector<vec2> uv;
+  std::vector<vec4> weights;
+  std::vector<uvec4> weightsIndex;
+
+  assert(ai_mesh->HasBones() && ai_mesh->HasPositions());
+
+  int numVert = ai_mesh->mNumVertices;
+  int numFaces = ai_mesh->mNumFaces;
+  int numBones = ai_mesh->mNumBones;
+
+  for (auto &channel : vertices)
+    channel.resize(numVert);
+  weights.resize(numVert, vec4(0.f));
+  weightsIndex.resize(numVert);
+  if (ai_mesh->HasNormals())
+  {
+    for (auto &channel : normals)
+      channel.resize(numVert);
+  }
+
+  if (ai_mesh->HasFaces())
+  {
+    indices.resize(numFaces * 3);
+    for (int i = 0; i < numFaces; i++)
     {
-      vec4 w = weights[i];
-      float s = w.x + w.y + w.z + w.w;
-      weights[i] *= 1.f / s;
+      assert(ai_mesh->mFaces[i].mNumIndices == 3);
+      for (int j = 0; j < 3; j++)
+        indices[i * 3 + j] = ai_mesh->mFaces[i].mIndices[j];
     }
   }
 
-  return make_mesh(indices, vertices, normals, uv, weights, weightsIndex);
+  if (ai_mesh->HasTextureCoords(0))
+  {
+    uv.resize(numVert);
+    for (int i = 0; i < numVert; i++)
+      uv[i] = to_vec2(ai_mesh->mTextureCoords[0][i]);
+  }
+
+  std::vector<int> weightsOffset(numVert, 0);
+  for (int i = 0; i < numBones; i++)
+  {
+    const aiBone *bone = ai_mesh->mBones[i];
+
+    for (unsigned j = 0; j < bone->mNumWeights; j++)
+    {
+      int vertex = bone->mWeights[j].mVertexId;
+      int offset = weightsOffset[vertex]++;
+      assert(offset < 4);
+      weights[vertex][offset] = bone->mWeights[j].mWeight;
+      weightsIndex[vertex][offset] = i;
+
+      vertices[offset][vertex] = to_vec3(bone->mOffsetMatrix * ai_mesh->mVertices[vertex]);
+      if (ai_mesh->HasNormals())
+        normals[offset][vertex] = to_vec3(bone->mOffsetMatrix * ai_mesh->mNormals[vertex]);
+    }
+  }
+  //the sum of weights not 1
+  for (int i = 0; i < numVert; i++)
+  {
+    vec4 w = weights[i];
+    float s = w.x + w.y + w.z + w.w;
+    weights[i] *= 1.f / s;
+  }
+
+  #define UNROLL_CHANNELS4(_arr4) (_arr4)[0], (_arr4[1]), (_arr4)[2], (_arr4[3])
+  return make_mesh(indices, UNROLL_CHANNELS4(vertices), UNROLL_CHANNELS4(normals), uv, weights, weightsIndex);
 }
 
 static SkeletonPtr make_skeleton(const aiMesh *ai_mesh)
@@ -244,12 +300,13 @@ static SkeletonPtr make_skeleton(const aiMesh *ai_mesh)
     return nullptr;
   }
   Span<aiBone *> bonesSpan(ai_mesh->mBones, ai_mesh->mNumBones);
-  GLuint transformsSSBO, offsetsSSBO;
-  glGenBuffers(1, &transformsSSBO);
+  GLuint localSSBO, offsetsSSBO, bonesSSBO;
+  glGenBuffers(1, &localSSBO);
   glGenBuffers(1, &offsetsSSBO);
+  glGenBuffers(1, &bonesSSBO);
 
-  SkeletonPtr skeletonHandle = std::make_shared<Skeleton>(bonesSpan, transformsSSBO, offsetsSSBO);
-  skeletonHandle->UpdateTransforms();
+  SkeletonPtr skeletonHandle = std::make_shared<Skeleton>(bonesSpan, localSSBO, offsetsSSBO, bonesSSBO);
+  skeletonHandle->UpdateSkeletalData();
   skeletonHandle->LoadGPUData();
   return skeletonHandle;
 }
@@ -274,7 +331,7 @@ MeshPtr load_mesh(const char *path, int idx)
     return nullptr;
   }
 
-  return make_mesh(scene->mMeshes[idx]);
+  return make_regular_mesh(scene->mMeshes[idx]);
 }
 
 RiggedMeshLoadRes load_rigged_mesh(const char *path, int idx)
@@ -287,7 +344,7 @@ RiggedMeshLoadRes load_rigged_mesh(const char *path, int idx)
     return RiggedMeshLoadRes{nullptr, nullptr};
   }
 
-  MeshPtr meshHandle = make_mesh(scene->mMeshes[idx]);
+  MeshPtr meshHandle = make_skinned_mesh(scene->mMeshes[idx]);
   SkeletonPtr skeletonHandle = make_skeleton(scene->mMeshes[idx]);
   return RiggedMeshLoadRes{meshHandle, skeletonHandle};
 }

@@ -6,6 +6,7 @@
 #include <memory>
 #include <vector>
 #include <string>
+#include <cassert>
 
 // This is not a complete list
 enum PrimitiveType
@@ -20,28 +21,61 @@ struct Mesh
   int numIndices;
 };
 
+// @TODO(PKiyashko): this is a full-blown class now. Consider encapsulating and
+//                   making the make_skeleton method a factory method
 struct Skeleton
 {
   struct Bone
   {
-    glm::mat4 localTransform;
     Bone *parent;
     std::string name;
+    size_t id;
   };
 
   std::vector<Bone> bones;
   Bone root;
+
+  std::vector<glm::mat4> boneLocalTransforms;
+  GLuint boneLocalTransformsSSBO{0};
   std::vector<glm::mat4> boneRootTransforms;
   GLuint boneRootTransformsSSBO{0};
   std::vector<glm::mat4> boneOffsets;
   GLuint boneOffsetsSSBO{0};
 
   Skeleton() = default;
-  Skeleton(Span<aiBone *> a_bones, GLuint a_tf_ssbo, GLuint a_p_ssbo);
+  Skeleton(Span<aiBone *> a_bones, GLuint a_loct_ssbo, GLuint a_tf_ssbo, GLuint a_p_ssbo);
 
-  void UpdateTransforms();
-  void LoadGPUData();
-  void UpdateGPUData();
+  size_t GetBoneId(const char *bone_name) const
+  {
+    for (const Bone &bone : bones)
+    {
+      if (strcmp(bone_name, bone.name.c_str()) == 0)
+        return bone.id;
+    }
+    return (size_t)(-1);
+  }
+
+  void SetBoneTransform(size_t bone_id, glm::mat4 transform)
+  {
+    // @TODO(PKiyashko): more graceful logging on invalid bone_id (or wrong bone name)
+    assert(bone_id < boneLocalTransforms.size());
+    boneLocalTransforms[bone_id] = transform;
+  }
+  void SetBoneTransform(const char *bone_name, glm::mat4 transform) 
+    { SetBoneTransform(GetBoneId(bone_name), transform); }
+
+  void ApplyTransformToBone(size_t bone_id, glm::mat4 transform) 
+  {
+    // @TODO(PKiyashko): more graceful logging on invalid bone_id (or wrong bone name)
+    assert(bone_id < boneLocalTransforms.size());
+    boneLocalTransforms[bone_id] = transform * boneLocalTransforms[bone_id];
+  }
+  void ApplyTransformToBone(const char *bone_name, glm::mat4 transform) 
+    { ApplyTransformToBone(GetBoneId(bone_name), transform); }
+
+  void UpdateSkeletalData();
+  void LoadGPUData() const;
+  void UpdateGPUData() const;
 };
 
 using MeshPtr = std::shared_ptr<Mesh>;

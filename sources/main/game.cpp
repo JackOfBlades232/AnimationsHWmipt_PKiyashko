@@ -3,6 +3,7 @@
 #include <render/mesh.h>
 #include "camera.h"
 #include <application.h>
+#include <cmath>
 
 struct UserCamera
 {
@@ -135,6 +136,21 @@ void game_init()
     meshAndSkeleton.skeletonHandle,
     std::move(material)
   });
+
+  // @TEST(PKiyashko): skinning animations test
+  SkeletonPtr &animchar = scene->characters[0].skeleton;
+  constexpr float offset = 0.6f;
+  animchar->ApplyTransformToBone("LeftLeg", glm::rotate(offset, glm::vec3(0.f, 0.f, 1.f)));
+  animchar->ApplyTransformToBone("LeafLeftUpLegRoll1", glm::rotate(offset, glm::vec3(0.f, 0.f, 1.f)));
+  animchar->ApplyTransformToBone("LeftFoot", glm::rotate(-offset, glm::vec3(0.f, 0.f, 1.f)));
+  animchar->ApplyTransformToBone("LeafLeftLegRoll1", glm::rotate(-offset, glm::vec3(0.f, 0.f, 1.f)));
+  animchar->ApplyTransformToBone("RightLeg", glm::rotate(offset, glm::vec3(0.f, 0.f, 1.f)));
+  animchar->ApplyTransformToBone("LeafRightUpLegRoll1", glm::rotate(offset, glm::vec3(0.f, 0.f, 1.f)));
+  animchar->ApplyTransformToBone("RightFoot", glm::rotate(-offset, glm::vec3(0.f, 0.f, 1.f)));
+  animchar->ApplyTransformToBone("LeafRightLegRoll1", glm::rotate(-offset, glm::vec3(0.f, 0.f, 1.f)));
+  constexpr float offset1 = 0.2f;
+  animchar->ApplyTransformToBone("Spine1", glm::translate(glm::vec3(0.f, offset1, 0.f)));
+
   std::fflush(stdout);
 }
 
@@ -145,6 +161,29 @@ void game_update()
     scene->userCamera.arcballCamera,
     scene->userCamera.transform,
     get_delta_time());
+
+  // @TEST(PKiyashko): skinning animations test
+  // @TODO(PKiyashko): make imguizmo test
+  assert(scene->characters.size() >= 1);
+  SkeletonPtr &animchar = scene->characters[0].skeleton;
+
+  constexpr float period = 1.0f;
+  constexpr float speed0 = 0.75f;
+  animchar->ApplyTransformToBone("Head", glm::rotate(speed0 * cosf(get_time()/period) * get_delta_time(), glm::vec3(0.f, 1.f, 0.f)));
+  constexpr float speed1 = 0.1f;
+  animchar->ApplyTransformToBone("LeftForeArm", glm::scale(glm::vec3(1.f + speed1 * cosf(get_time()/period) * get_delta_time())));
+  animchar->ApplyTransformToBone("RightForeArm", glm::scale(glm::vec3(1.f + speed1 * cosf(get_time()/period) * get_delta_time())));
+  constexpr float speed2 = 0.3f;
+  animchar->ApplyTransformToBone("LeftLeg", glm::rotate(-speed2 * sinf(get_time()/period) * get_delta_time(), glm::vec3(0.f, 0.f, 1.f)));
+  animchar->ApplyTransformToBone("LeafLeftUpLegRoll1", glm::rotate(-speed2 * sinf(get_time()/period) * get_delta_time(), glm::vec3(0.f, 0.f, 1.f)));
+  animchar->ApplyTransformToBone("LeftFoot", glm::rotate(speed2 * sinf(get_time()/period) * get_delta_time(), glm::vec3(0.f, 0.f, 1.f)));
+  animchar->ApplyTransformToBone("LeafLeftLegRoll1", glm::rotate(speed2 * sinf(get_time()/period) * get_delta_time(), glm::vec3(0.f, 0.f, 1.f)));
+  animchar->ApplyTransformToBone("RightLeg", glm::rotate(speed2 * cosf(get_time()/period) * get_delta_time(), glm::vec3(0.f, 0.f, 1.f)));
+  animchar->ApplyTransformToBone("LeafRightUpLegRoll1", glm::rotate(speed2 * cosf(get_time()/period) * get_delta_time(), glm::vec3(0.f, 0.f, 1.f)));
+  animchar->ApplyTransformToBone("RightFoot", glm::rotate(-speed2 * cosf(get_time()/period) * get_delta_time(), glm::vec3(0.f, 0.f, 1.f)));
+  animchar->ApplyTransformToBone("LeafRightLegRoll1", glm::rotate(-speed2 * cosf(get_time()/period) * get_delta_time(), glm::vec3(0.f, 0.f, 1.f)));
+  constexpr float speed3 = 0.2f;
+  animchar->ApplyTransformToBone("Spine1", glm::translate(glm::vec3(0.f, speed3 * cosf(get_time()/period) * get_delta_time(), 0.f)));
 }
 
 void render_character(
@@ -158,6 +197,7 @@ void render_character(
 
   shader.use();
   material.bind_uniforms_to_shader();
+  shader.bind_ssbo(character.skeleton->boneOffsetsSSBO, 0);
   shader.set_mat4x4("Transform", character.transform);
   shader.set_mat4x4("ViewProjection", cameraProjView);
   shader.set_vec3("CameraPosition", cameraPosition);
@@ -200,6 +240,12 @@ void render_skeleton(
 
 void game_render()
 {
+  for (const Character &character : scene->characters)
+  {
+    character.skeleton->UpdateSkeletalData();
+    character.skeleton->UpdateGPUData();
+  }
+
   glEnable(GL_DEPTH_TEST);
   glDisable(GL_BLEND);
   const float grayColor = 0.3f;
