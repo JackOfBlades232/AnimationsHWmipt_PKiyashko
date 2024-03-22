@@ -277,7 +277,11 @@ static MeshPtr make_skinned_mesh(const aiMesh *ai_mesh)
 
       vertices[offset][vertex] = to_vec3(bone->mOffsetMatrix * ai_mesh->mVertices[vertex]);
       if (ai_mesh->HasNormals())
-        normals[offset][vertex] = to_vec3(bone->mOffsetMatrix * ai_mesh->mNormals[vertex]);
+      {
+        glm::vec3 norm = glm::normalize(to_vec3(ai_mesh->mNormals[vertex]));
+        glm::mat3 offsetMatrix = glm::transpose(glm::inverse(glm::mat3(ai_to_glm_mat4(bone->mOffsetMatrix))));
+        normals[offset][vertex] = glm::normalize(offsetMatrix * norm);
+      }
     }
   }
   //the sum of weights not 1

@@ -148,7 +148,7 @@ void game_init()
   animchar->ApplyTransformToBone("LeafRightUpLegRoll1", glm::rotate(offset, glm::vec3(0.f, 0.f, 1.f)));
   animchar->ApplyTransformToBone("RightFoot", glm::rotate(-offset, glm::vec3(0.f, 0.f, 1.f)));
   animchar->ApplyTransformToBone("LeafRightLegRoll1", glm::rotate(-offset, glm::vec3(0.f, 0.f, 1.f)));
-  constexpr float offset1 = 0.2f;
+  constexpr float offset1 = 0.03f;
   animchar->ApplyTransformToBone("Spine1", glm::translate(glm::vec3(0.f, offset1, 0.f)));
 
   std::fflush(stdout);
@@ -170,7 +170,7 @@ void game_update()
   constexpr float period = 1.0f;
   constexpr float speed0 = 0.75f;
   animchar->ApplyTransformToBone("Head", glm::rotate(speed0 * cosf(get_time()/period) * get_delta_time(), glm::vec3(0.f, 1.f, 0.f)));
-  constexpr float speed1 = 0.1f;
+  constexpr float speed1 = 0.4f;
   animchar->ApplyTransformToBone("LeftForeArm", glm::scale(glm::vec3(1.f + speed1 * cosf(get_time()/period) * get_delta_time())));
   animchar->ApplyTransformToBone("RightForeArm", glm::scale(glm::vec3(1.f + speed1 * cosf(get_time()/period) * get_delta_time())));
   constexpr float speed2 = 0.3f;
@@ -182,7 +182,7 @@ void game_update()
   animchar->ApplyTransformToBone("LeafRightUpLegRoll1", glm::rotate(speed2 * cosf(get_time()/period) * get_delta_time(), glm::vec3(0.f, 0.f, 1.f)));
   animchar->ApplyTransformToBone("RightFoot", glm::rotate(-speed2 * cosf(get_time()/period) * get_delta_time(), glm::vec3(0.f, 0.f, 1.f)));
   animchar->ApplyTransformToBone("LeafRightLegRoll1", glm::rotate(-speed2 * cosf(get_time()/period) * get_delta_time(), glm::vec3(0.f, 0.f, 1.f)));
-  constexpr float speed3 = 0.2f;
+  constexpr float speed3 = 0.08f;
   animchar->ApplyTransformToBone("Spine1", glm::translate(glm::vec3(0.f, speed3 * cosf(get_time()/period) * get_delta_time(), 0.f)));
 }
 

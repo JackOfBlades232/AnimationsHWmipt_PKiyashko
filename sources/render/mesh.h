@@ -35,6 +35,7 @@ struct Skeleton
   std::vector<Bone> bones;
   Bone root;
 
+  // @TODO(PKiyashko): replace with UBOs. These are not that big)
   std::vector<glm::mat4> boneLocalTransforms;
   GLuint boneLocalTransformsSSBO{0};
   std::vector<glm::mat4> boneRootTransforms;

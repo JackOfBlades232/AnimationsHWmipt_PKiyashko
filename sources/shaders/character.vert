@@ -37,17 +37,16 @@ void main()
                        BoneWeights.z * boneOffsets[BoneIndex.z] * vec4(BonespacePositions2, 1.0) +
                        BoneWeights.w * boneOffsets[BoneIndex.w] * vec4(BonespacePositions3, 1.0);
 
-  vec4 meshspaceNorm = BoneWeights.x * boneOffsets[BoneIndex.x] * vec4(BonespaceNormals0, 1.0) +
-                       BoneWeights.y * boneOffsets[BoneIndex.y] * vec4(BonespaceNormals1, 1.0) +
-                       BoneWeights.z * boneOffsets[BoneIndex.z] * vec4(BonespaceNormals2, 1.0) +
-                       BoneWeights.w * boneOffsets[BoneIndex.w] * vec4(BonespaceNormals3, 1.0);
+  vec3 meshspaceNorm = BoneWeights.x * normalize(transpose(inverse(mat3(boneOffsets[BoneIndex.x]))) * BonespaceNormals0.xyz) +
+                       BoneWeights.y * normalize(transpose(inverse(mat3(boneOffsets[BoneIndex.y]))) * BonespaceNormals1.xyz) +
+                       BoneWeights.z * normalize(transpose(inverse(mat3(boneOffsets[BoneIndex.z]))) * BonespaceNormals2.xyz) +
+                       BoneWeights.w * normalize(transpose(inverse(mat3(boneOffsets[BoneIndex.w]))) * BonespaceNormals3.xyz);
 
   vec3 VertexPosition = (Transform * meshspacePos).xyz;
-  vsOutput.EyespaceNormal = (Transform * meshspaceNorm).xyz;
+  vsOutput.EyespaceNormal = normalize(transpose(inverse(mat3(Transform))) * meshspaceNorm);
 
   gl_Position = ViewProjection * vec4(VertexPosition, 1);
   vsOutput.WorldPosition = VertexPosition;
 
   vsOutput.UV = UV;
-
 }
