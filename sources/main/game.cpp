@@ -21,7 +21,8 @@ struct UserCamera
 struct Character
 {
   glm::mat4 transform;
-  RiggedMeshPtr rmesh;
+  MeshPtr mesh;
+  SkeletonPtr skeleton;
   MaterialPtr material;
 };
 
@@ -80,7 +81,7 @@ static std::vector<glm::vec4> axes_mesh_vert =
   {0.f, 0.f, 0.f, 1.f},
   {0.f, 0.f, .1f, 1.f},
 };
-// For ease of compatibility with mesh functions @TODO: improve
+// @NOTE(PKiyashko) For ease of compatibility with mesh functions
 static std::vector<unsigned int> axes_mesh_ind =
 {
   0, 1,
@@ -137,9 +138,11 @@ void game_init()
 
   auto mesh = load_mesh(ROOT_PATH"resources/MotusMan_v55/MotusMan_v55.fbx", 0);
 
+  RiggedMeshLoadRes meshAndSkeleton = load_rigged_mesh(ROOT_PATH"resources/MotusMan_v55/MotusMan_v55.fbx", 0);
   scene->characters.emplace_back(Character{
     glm::identity<glm::mat4>(),
-    load_rigged_mesh(ROOT_PATH"resources/MotusMan_v55/MotusMan_v55.fbx", 0),
+    meshAndSkeleton.meshHandle,
+    meshAndSkeleton.skeletonHandle,
     std::move(material)
   });
   std::fflush(stdout);
@@ -171,7 +174,7 @@ void render_character(const Character &character, const mat4 &cameraProjView, ve
     shader.set_vec3("AmbientLight", light.ambient);
     shader.set_vec3("SunLight", light.lightColor);
 
-    render(character.rmesh->mesh);
+    render(*character.mesh);
   } break;
 
   case RMODE_BONES:
@@ -179,25 +182,25 @@ void render_character(const Character &character, const mat4 &cameraProjView, ve
     const Shader &bonesShader = bones_material->get_shader();
     const Shader &axesShader = axes_material->get_shader();
 
-    bonesShader.use();
-    bones_material->bind_uniforms_to_shader();
-    bonesShader.bind_ssbo(character.rmesh->skeleton.boneTransformsBufferObject, 0);
-    bonesShader.set_mat4x4("RootTransform", character.transform);
-    bonesShader.set_mat4x4("ViewProjection", cameraProjView);
-    bonesShader.set_vec3("CameraPosition", cameraPosition);
-    bonesShader.set_vec3("LightDirection", glm::normalize(light.lightDirection));
-    bonesShader.set_vec3("AmbientLight", light.ambient);
-    bonesShader.set_vec3("SunLight", light.lightColor);
+    //bonesShader.use();
+    //bones_material->bind_uniforms_to_shader();
+    //bonesShader.bind_ssbo(character.skeleton->boneRootTransformsBO, 0);
+    //bonesShader.set_mat4x4("RootTransform", character.transform);
+    //bonesShader.set_mat4x4("ViewProjection", cameraProjView);
+    //bonesShader.set_vec3("CameraPosition", cameraPosition);
+    //bonesShader.set_vec3("LightDirection", glm::normalize(light.lightDirection));
+    //bonesShader.set_vec3("AmbientLight", light.ambient);
+    //bonesShader.set_vec3("SunLight", light.lightColor);
 
-    render_instanced(*bone_mesh, character.rmesh->skeleton.bones.size());
+    //render_instanced(*bone_mesh, character.skeleton->bones.size());
 
     axesShader.use();
     axes_material->bind_uniforms_to_shader();
-    axesShader.bind_ssbo(character.rmesh->skeleton.boneOffsetsBufferObject, 0);
+    axesShader.bind_ssbo(character.skeleton->boneOffsetsBO, 0);
     axesShader.set_mat4x4("RootTransform", character.transform);
     axesShader.set_mat4x4("ViewProjection", cameraProjView);
 
-    render_instanced(*axes_mesh, character.rmesh->skeleton.bones.size(), LINES);
+    render_instanced(*axes_mesh, character.skeleton->bones.size(), LINES);
   } break;
 
   default:

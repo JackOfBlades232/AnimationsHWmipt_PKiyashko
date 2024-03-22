@@ -10,6 +10,104 @@
 #include <cstring>
 
 
+static glm::mat4 ai_to_glm_mat4(const aiMatrix4x4 &aiMatr)
+{
+  return glm::mat4(
+    aiMatr.a1, aiMatr.b1, aiMatr.c1, aiMatr.d1,
+    aiMatr.a2, aiMatr.b2, aiMatr.c2, aiMatr.d2,
+    aiMatr.a3, aiMatr.b3, aiMatr.c3, aiMatr.d3,
+    aiMatr.a4, aiMatr.b4, aiMatr.c4, aiMatr.d4);
+}
+
+// @TODO(PKiyashko): should all this logic be in the constructor? For small meshes, seems fine
+Skeleton::Skeleton(Span<aiBone *> a_bones, GLuint a_tf_ssbo, GLuint a_p_ssbo)
+  : bones(a_bones.size()), boneRootTransforms(a_bones.size()), boneRootTransformsBO(a_tf_ssbo),
+    boneOffsets(a_bones.size()), boneOffsetsBO(a_p_ssbo) 
+{
+  for (size_t i = 0; i < a_bones.size(); i++)
+  {
+    const aiBone *srcBone = a_bones[i];
+    Bone &dstBone = bones[i];
+
+    dstBone.localTransform = ai_to_glm_mat4(srcBone->mNode->mTransformation);
+    dstBone.name = std::string(srcBone->mName.C_Str());
+
+    dstBone.parent = nullptr;
+    if (srcBone->mNode->mParent)
+    {
+      for (size_t j = 0; j < a_bones.size(); j++)
+      {
+        // @NOTE(PKiyashko): mParent seems to point to some other aiNode, which is strange
+        //                   so strings will have to do
+        if (a_bones[j]->mName == srcBone->mNode->mParent->mName)
+        {
+          dstBone.parent = &bones[j];
+          break;
+        }
+      }
+
+      // @NOTE(PKiyashko): if a skeleton bone has no in-skeleton parent, we presume it
+      //                   to be connected to the root
+      if (!dstBone.parent)
+      {
+        const aiNode *aiRoot = srcBone->mNode->mParent;
+
+        root.localTransform = ai_to_glm_mat4(aiRoot->mTransformation);
+        for (const aiNode *aiParent = aiRoot->mParent; aiParent; aiParent = aiParent->mParent)
+          root.localTransform = ai_to_glm_mat4(aiParent->mTransformation) * root.localTransform;
+        root.name = std::string(aiRoot->mName.C_Str());
+        root.parent = nullptr;
+
+        dstBone.parent = &root;
+      }
+    }
+  }
+}
+
+void Skeleton::UpdateTransforms()
+{
+  for (size_t i = 0; i < boneRootTransforms.size(); i++)
+  {
+    const Bone &bone = bones[i];
+
+    glm::mat4 parentTransform;
+    for (const Bone *bonep = bone.parent; bonep; bonep = bonep->parent)
+      parentTransform = bonep->localTransform * parentTransform;
+    parentTransform = root.localTransform * parentTransform;
+
+    boneOffsets[i] = parentTransform * bone.localTransform;
+
+    glm::vec3 tipOffset(bone.localTransform[3][0], bone.localTransform[3][1], bone.localTransform[3][2]);
+    float scale = glm::length(tipOffset);
+    tipOffset = glm::normalize(tipOffset); // @TODO(PKiyashko): check for safe normalization
+
+    boneRootTransforms[i] = parentTransform *
+                            glm::lookAt(glm::vec3(0.f), tipOffset, glm::vec3(0.f, 1.f, 0.f)) *
+                            glm::scale(glm::vec3(scale));
+  }
+}
+
+void Skeleton::LoadGPUData()
+{
+  glBindBuffer(GL_SHADER_STORAGE_BUFFER, boneRootTransformsBO);
+  glBufferData(GL_SHADER_STORAGE_BUFFER, sizeof(boneRootTransforms[0]) * boneRootTransforms.size(), 
+    boneRootTransforms.data(), GL_DYNAMIC_DRAW);
+  glBindBuffer(GL_SHADER_STORAGE_BUFFER, boneOffsetsBO);
+  glBufferData(GL_SHADER_STORAGE_BUFFER, sizeof(boneOffsets[0]) * boneOffsets.size(), 
+    boneOffsets.data(), GL_DYNAMIC_DRAW);
+  glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+}
+
+void Skeleton::UpdateGPUData()
+{
+  glBindBuffer(GL_SHADER_STORAGE_BUFFER, boneRootTransformsBO);
+  glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, sizeof(boneRootTransforms[0]) * boneRootTransforms.size(), boneRootTransforms.data());
+  glBindBuffer(GL_SHADER_STORAGE_BUFFER, boneOffsetsBO);
+  glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, sizeof(boneOffsets[0]) * boneOffsets.size(), boneOffsets.data());
+  glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+}
+
+
 static void create_indices(const std::vector<unsigned int> &indices)
 {
   GLuint arrayIndexBuffer;
@@ -33,84 +131,36 @@ static void init_channel(int index, size_t data_size, const void *data_ptr, int 
     glVertexAttribIPointer(index, component_count, GL_UNSIGNED_INT, 0, 0);
 }
 
-
 template<int i>
-static void InitChannel() { }
+static void init_channel() { }
 
 template<int i, typename T, typename... Channel>
-static void InitChannel(const std::vector<T> &channel, const Channel&... channels)
+static void init_channel(const std::vector<T> &channel, const Channel&... channels)
 {
   if (channel.size() > 0)
   {
     const int size = sizeof(T) / sizeof(channel[0][0]);
     init_channel(i, sizeof(T) * channel.size(), channel.data(), size, !(std::is_same<T, uvec4>::value));
   }
-  InitChannel<i + 1>(channels...);
+  init_channel<i + 1>(channels...);
 }
 
-
-void Skeleton::UpdateTransforms()
-{
-  for (size_t i = 0; i < boneTransforms.size(); i++)
-  {
-    const aiBone *bone = bones[i];
-
-    aiMatrix4x4 localTransform = bone->mNode->mTransformation;
-    aiMatrix4x4 parentTransform;
-    for (const aiNode *node = bone->mNode->mParent; node; node = node->mParent)
-      parentTransform = node->mTransformation * parentTransform;
-    aiMatrix4x4 transform = parentTransform * localTransform;
-
-    boneOffsets[i] = glm::mat4(
-      transform.a1, transform.b1, transform.c1, transform.d1,
-      transform.a2, transform.b2, transform.c2, transform.d2,
-      transform.a3, transform.b3, transform.c3, transform.d3,
-      transform.a4, transform.b4, transform.c4, transform.d4);
-
-    aiVector3D tipOffset(localTransform.a4, localTransform.b4, localTransform.c4);
-    float scale = tipOffset.Length();
-    tipOffset.NormalizeSafe();
-
-    aiMatrix4x4 scaleMat;
-    aiMatrix4x4 rotationMat;
-    aiMatrix4x4 boneTransform = 
-      parentTransform *
-      aiMatrix4x4::FromToMatrix(aiVector3D(1.f, 0.f, 0.f), tipOffset, rotationMat) * 
-      aiMatrix4x4::Scaling(aiVector3D(scale), scaleMat);
-
-    boneTransforms[i] = glm::mat4(
-      boneTransform.a1, boneTransform.b1, boneTransform.c1, boneTransform.d1,
-      boneTransform.a2, boneTransform.b2, boneTransform.c2, boneTransform.d2,
-      boneTransform.a3, boneTransform.b3, boneTransform.c3, boneTransform.d3,
-      boneTransform.a4, boneTransform.b4, boneTransform.c4, boneTransform.d4);
-  }
-}
-
-void Skeleton::UpdateGpuData()
-{
-  glBindBuffer(GL_SHADER_STORAGE_BUFFER, boneTransformsBufferObject);
-  glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, sizeof(boneTransforms[0]) * boneTransforms.size(), boneTransforms.data());
-  glBindBuffer(GL_SHADER_STORAGE_BUFFER, boneOffsetsBufferObject);
-  glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, sizeof(boneOffsets[0]) * boneOffsets.size(), boneOffsets.data());
-  glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
-}
 
 
 template<typename... Channel>
-static void init_mesh(Mesh *out_mesh, const std::vector<unsigned int> &indices, const Channel&... channels)
+static MeshPtr make_mesh(const std::vector<unsigned int> &indices, const Channel&... channels)
 {
-  uint32_t vertexArrayBufferObject;
+  GLuint vertexArrayBufferObject;
   glGenVertexArrays(1, &vertexArrayBufferObject);
   glBindVertexArray(vertexArrayBufferObject);
-  InitChannel<0>(channels...);
+  init_channel<0>(channels...);
   create_indices(indices);
 
-  // @TODO: wtf why is this not working
-  *out_mesh = Mesh{vertexArrayBufferObject, (int)indices.size()};
+  return std::make_shared<Mesh>(Mesh{vertexArrayBufferObject, (int)indices.size()});
 }
 
 
-static void init_mesh(Mesh *out_mesh, const aiMesh *ai_mesh, bool use_bones = false)
+static MeshPtr make_mesh(const aiMesh *ai_mesh, bool use_bones = false)
 {
   std::vector<uint32_t> indices;
   std::vector<vec3> vertices;
@@ -181,68 +231,63 @@ static void init_mesh(Mesh *out_mesh, const aiMesh *ai_mesh, bool use_bones = fa
     }
   }
 
-  init_mesh(out_mesh, indices, vertices, normals, uv, weights, weightsIndex);
+  return make_mesh(indices, vertices, normals, uv, weights, weightsIndex);
 }
 
-static void init_skeleton(Skeleton *out_skeleton, const aiMesh *ai_mesh)
+static SkeletonPtr make_skeleton(const aiMesh *ai_mesh)
 {
-  assert(ai_mesh->HasBones()); // @TODO: more graceful?
+  if (!ai_mesh->HasBones())
+  {
+    debug_error("trying to load rigged mesh that has no bones");
+    return nullptr;
+  }
   Span<aiBone *> bonesSpan(ai_mesh->mBones, ai_mesh->mNumBones);
-  uint32_t bonesSsbo, pointsSsbo;
+  GLuint transformsSSBO, offsetsSSBO;
+  glGenBuffers(1, &transformsSSBO);
+  glGenBuffers(1, &offsetsSSBO);
 
-  glGenBuffers(1, &bonesSsbo);
-  glGenBuffers(1, &pointsSsbo);
-  *out_skeleton = Skeleton(bonesSpan, bonesSsbo, pointsSsbo);
-  out_skeleton->UpdateTransforms();
-
-  glBindBuffer(GL_SHADER_STORAGE_BUFFER, bonesSsbo);
-  glBufferData(GL_SHADER_STORAGE_BUFFER, sizeof(out_skeleton->boneTransforms[0]) * out_skeleton->boneTransforms.size(), 
-    out_skeleton->boneTransforms.data(), GL_DYNAMIC_DRAW /*@HUH? this is not thought out*/);
-  glBindBuffer(GL_SHADER_STORAGE_BUFFER, pointsSsbo);
-  glBufferData(GL_SHADER_STORAGE_BUFFER, sizeof(out_skeleton->boneOffsets[0]) * out_skeleton->boneOffsets.size(), 
-    out_skeleton->boneOffsets.data(), GL_DYNAMIC_DRAW);
-  glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+  SkeletonPtr skeletonHandle = std::make_shared<Skeleton>(bonesSpan, transformsSSBO, offsetsSSBO);
+  skeletonHandle->UpdateTransforms();
+  skeletonHandle->LoadGPUData();
+  return skeletonHandle;
 }
 
-#define AI_READ_SCENE(_importer, _path)                                              \
-  _importer ## .SetPropertyBool(AI_CONFIG_IMPORT_FBX_PRESERVE_PIVOTS, false);        \
-  _importer ## .SetPropertyFloat(AI_CONFIG_GLOBAL_SCALE_FACTOR_KEY, 1.f);            \
-  _importer ## .ReadFile(_path, aiProcess_Triangulate | aiProcess_LimitBoneWeights | \
-    aiProcess_GenNormals | aiProcess_GlobalScale | aiProcess_FlipWindingOrder |      \
+static const aiScene *read_ai_scene(Assimp::Importer &imp, const char *path)
+{
+  imp.SetPropertyBool(AI_CONFIG_IMPORT_FBX_PRESERVE_PIVOTS, false);
+  imp.SetPropertyFloat(AI_CONFIG_GLOBAL_SCALE_FACTOR_KEY, 1.f);
+  imp.ReadFile(path, aiProcess_Triangulate | aiProcess_LimitBoneWeights |
+    aiProcess_GenNormals | aiProcess_GlobalScale | aiProcess_FlipWindingOrder |
     aiProcess_PopulateArmatureData);
+  return imp.GetScene();
+}
 
 MeshPtr load_mesh(const char *path, int idx)
 {
   Assimp::Importer importer;
-  AI_READ_SCENE(importer, path);
-  const aiScene* scene = importer.GetScene();
+  const aiScene* scene = read_ai_scene(importer, path);
   if (!scene)
   {
     debug_error("no asset in %s", path);
     return nullptr;
   }
 
-  MeshPtr meshHandle = std::make_shared<Mesh>();
-  init_mesh(meshHandle.get(), scene->mMeshes[idx]);
-  return meshHandle;
+  return make_mesh(scene->mMeshes[idx]);
 }
 
-RiggedMeshPtr load_rigged_mesh(const char *path, int idx)
+RiggedMeshLoadRes load_rigged_mesh(const char *path, int idx)
 {
-  // @TODO: this could be pulled out
   Assimp::Importer importer;
-  AI_READ_SCENE(importer, path);
-  const aiScene* scene = importer.GetScene();
+  const aiScene* scene = read_ai_scene(importer, path);
   if (!scene)
   {
     debug_error("no asset in %s", path);
-    return nullptr;
+    return RiggedMeshLoadRes{nullptr, nullptr};
   }
 
-  RiggedMeshPtr rmeshHandle = std::make_shared<RiggedMesh>();
-  init_mesh(&rmeshHandle->mesh, scene->mMeshes[idx]);
-  init_skeleton(&rmeshHandle->skeleton, scene->mMeshes[idx]);
-  return rmeshHandle;
+  MeshPtr meshHandle = make_mesh(scene->mMeshes[idx]);
+  SkeletonPtr skeletonHandle = make_skeleton(scene->mMeshes[idx]);
+  return RiggedMeshLoadRes{meshHandle, skeletonHandle};
 }
 
 void render(const Mesh &mesh, PrimitiveType pType)
@@ -259,12 +304,10 @@ void render_instanced(const Mesh &mesh, uint32_t cnt, PrimitiveType pType)
 
 MeshPtr make_mesh_from_data(std::vector<glm::vec4> &vert, std::vector<unsigned int> &ind, std::vector<glm::vec4> *norm)
 {
-  MeshPtr outMesh = std::make_shared<Mesh>();
   if (norm)
-    init_mesh(outMesh.get(), ind, vert, *norm);
+    return make_mesh(ind, vert, *norm);
   else
-    init_mesh(outMesh.get(), ind, vert);
-  return outMesh;
+    return make_mesh(ind, vert);
 }
 
 MeshPtr make_plane_mesh()
@@ -273,7 +316,5 @@ MeshPtr make_plane_mesh()
   std::vector<vec3> vertices = {vec3(-1,0,-1), vec3(1,0,-1), vec3(1,0,1), vec3(-1,0,1)};
   std::vector<vec3> normals(4, vec3(0,1,0));
   std::vector<vec2> uv = {vec2(0,0), vec2(1,0), vec2(1,1), vec2(0,1)};
-  MeshPtr meshHandle = std::make_shared<Mesh>();
-  init_mesh(meshHandle.get(), indices, vertices, normals, uv);
-  return meshHandle;
+  return make_mesh(indices, vertices, normals, uv);
 }
