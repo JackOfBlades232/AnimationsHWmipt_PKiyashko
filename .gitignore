@@ -44,3 +44,4 @@ build.ninja
 FileContentIndex/
 v17/
 *.sqlite
+.vs/
