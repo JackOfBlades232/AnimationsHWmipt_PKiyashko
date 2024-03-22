@@ -21,8 +21,8 @@ static glm::mat4 ai_to_glm_mat4(const aiMatrix4x4 &aiMatr)
 
 // @TODO(PKiyashko): should all this logic be in the constructor? For small meshes, seems fine
 Skeleton::Skeleton(Span<aiBone *> a_bones, GLuint a_tf_ssbo, GLuint a_p_ssbo)
-  : bones(a_bones.size()), boneRootTransforms(a_bones.size()), boneRootTransformsBO(a_tf_ssbo),
-    boneOffsets(a_bones.size()), boneOffsetsBO(a_p_ssbo) 
+  : bones(a_bones.size()), boneRootTransforms(a_bones.size()), boneRootTransformsSSBO(a_tf_ssbo),
+    boneOffsets(a_bones.size()), boneOffsetsSSBO(a_p_ssbo) 
 {
   for (size_t i = 0; i < a_bones.size(); i++)
   {
@@ -70,7 +70,7 @@ void Skeleton::UpdateTransforms()
   {
     const Bone &bone = bones[i];
 
-    glm::mat4 parentTransform;
+    glm::mat4 parentTransform = glm::identity<glm::mat4>();
     for (const Bone *bonep = bone.parent; bonep; bonep = bonep->parent)
       parentTransform = bonep->localTransform * parentTransform;
     parentTransform = root.localTransform * parentTransform;
@@ -79,20 +79,22 @@ void Skeleton::UpdateTransforms()
 
     glm::vec3 tipOffset(bone.localTransform[3][0], bone.localTransform[3][1], bone.localTransform[3][2]);
     float scale = glm::length(tipOffset);
-    tipOffset = glm::normalize(tipOffset); // @TODO(PKiyashko): check for safe normalization
 
+    // @NOTE(PKiyashko): the lookAtLH is OpenGL-specific (in fact, all of the code relies on assimp and opengl
+    //                   both having rh coord systems). This is due to the fact that camera is considered
+    //                   to be looking in the negative Z direction in rh, and our bone has (0, 0, 1) direction
     boneRootTransforms[i] = parentTransform *
-                            glm::lookAt(glm::vec3(0.f), tipOffset, glm::vec3(0.f, 1.f, 0.f)) *
+                            glm::inverse(glm::lookAtLH(glm::vec3(0.f), tipOffset, glm::vec3(0.f, 1.f, 0.f))) *
                             glm::scale(glm::vec3(scale));
   }
 }
 
 void Skeleton::LoadGPUData()
 {
-  glBindBuffer(GL_SHADER_STORAGE_BUFFER, boneRootTransformsBO);
+  glBindBuffer(GL_SHADER_STORAGE_BUFFER, boneRootTransformsSSBO);
   glBufferData(GL_SHADER_STORAGE_BUFFER, sizeof(boneRootTransforms[0]) * boneRootTransforms.size(), 
     boneRootTransforms.data(), GL_DYNAMIC_DRAW);
-  glBindBuffer(GL_SHADER_STORAGE_BUFFER, boneOffsetsBO);
+  glBindBuffer(GL_SHADER_STORAGE_BUFFER, boneOffsetsSSBO);
   glBufferData(GL_SHADER_STORAGE_BUFFER, sizeof(boneOffsets[0]) * boneOffsets.size(), 
     boneOffsets.data(), GL_DYNAMIC_DRAW);
   glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
@@ -100,9 +102,9 @@ void Skeleton::LoadGPUData()
 
 void Skeleton::UpdateGPUData()
 {
-  glBindBuffer(GL_SHADER_STORAGE_BUFFER, boneRootTransformsBO);
+  glBindBuffer(GL_SHADER_STORAGE_BUFFER, boneRootTransformsSSBO);
   glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, sizeof(boneRootTransforms[0]) * boneRootTransforms.size(), boneRootTransforms.data());
-  glBindBuffer(GL_SHADER_STORAGE_BUFFER, boneOffsetsBO);
+  glBindBuffer(GL_SHADER_STORAGE_BUFFER, boneOffsetsSSBO);
   glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, sizeof(boneOffsets[0]) * boneOffsets.size(), boneOffsets.data());
   glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
 }

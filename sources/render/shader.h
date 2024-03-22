@@ -111,5 +111,6 @@ public:
 using ShaderPtr = std::shared_ptr<Shader>;
 
 ShaderPtr compile_shader(const char *name, const char *vs_path, const char *ps_path);
+void add_shader_include(const char *name, const char *path);
 
 void recompile_all_shaders();

@@ -1,12 +1,13 @@
 #include "shader.h"
-#include <iostream>
-#include <map>
 #include "log.h"
 #include "glad/glad.h"
+#include <cstring>
 #include <filesystem>
 #include <array>
 #include <vector>
+#include <map>
 #include <fstream>
+#include <iostream>
 
 
 static void read_shader_info(Shader &shader)
@@ -114,6 +115,12 @@ ShaderPtr compile_shader(const char *name, const char *vs_path, const char *ps_p
     return shader;
   }
   return nullptr;
+}
+
+void add_shader_include(const char *name, const char *path)
+{
+  std::string incString = read_file(path);
+  glNamedStringARB(GL_SHADER_INCLUDE_ARB, strlen(name), name, incString.length(), incString.c_str());
 }
 
 

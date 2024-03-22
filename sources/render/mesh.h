@@ -32,9 +32,9 @@ struct Skeleton
   std::vector<Bone> bones;
   Bone root;
   std::vector<glm::mat4> boneRootTransforms;
-  GLuint boneRootTransformsBO{0};
+  GLuint boneRootTransformsSSBO{0};
   std::vector<glm::mat4> boneOffsets;
-  GLuint boneOffsetsBO{0};
+  GLuint boneOffsetsSSBO{0};
 
   Skeleton() = default;
   Skeleton(Span<aiBone *> a_bones, GLuint a_tf_ssbo, GLuint a_p_ssbo);

@@ -12,7 +12,7 @@ set(SRC_ROOT ${CMAKE_SOURCE_DIR})
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_FLAGS "/w /Zi")
 #set(CMAKE_CXX_FLAGS "/Wall /Zi")
-# TODO: translate all warning exclustions to msvc (/WdXXXX)
+# @TODO(PKiyashko): translate all warning exclustions to msvc (/WdXXXX)
 #set(CMAKE_CXX_FLAGS "-m64 -Wall -Wextra -Wno-pragma-pack -Wno-deprecated-declarations -Wno-deprecated-copy -g")
 
 
