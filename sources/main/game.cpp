@@ -1,15 +1,8 @@
-
 #include <render/direction_light.h>
 #include <render/material.h>
 #include <render/mesh.h>
 #include "camera.h"
 #include <application.h>
-
-enum RenderMode
-{
-  RMODE_REGULAR,
-  RMODE_BONES
-};
 
 struct UserCamera
 {
@@ -29,13 +22,10 @@ struct Character
 struct Scene
 {
   DirectionLight light;
-
   UserCamera userCamera;
-
-  RenderMode rmode;
+  bool renderBones;
 
   std::vector<Character> characters;
-
 };
 
 static std::unique_ptr<Scene> scene;
@@ -102,7 +92,7 @@ void game_init()
 
   scene->userCamera.projection = glm::perspective(90.f * DegToRad, get_aspect_ratio(), 0.01f, 500.f);
 
-  scene->rmode = RMODE_REGULAR;
+  scene->renderBones = false;
 
   ArcballCamera &cam = scene->userCamera.arcballCamera;
   cam.curZoom = cam.targetZoom = 0.5f;
@@ -121,8 +111,8 @@ void game_init()
   input.onMouseMotionEvent += [](const SDL_MouseMotionEvent &e) { arccam_mouse_move_handler(e, scene->userCamera.arcballCamera); };
   input.onMouseWheelEvent += [](const SDL_MouseWheelEvent &e) { arccam_mouse_wheel_handler(e, scene->userCamera.arcballCamera); };
   input.onKeyboardEvent += [](const SDL_KeyboardEvent &e) {
-    if (e.keysym.sym == SDLK_q && e.state == SDL_RELEASED && e.repeat == 0)
-      scene->rmode = scene->rmode == RMODE_REGULAR ? RMODE_BONES : RMODE_REGULAR;
+      if (e.keysym.sym == SDLK_q && e.state == SDL_RELEASED && e.repeat == 0)
+        scene->renderBones = !scene->renderBones;
     };
 
   add_shader_include("/lighting.frag.inc", ROOT_PATH"sources/shaders/lighting.frag.inc");
@@ -157,55 +147,55 @@ void game_update()
     get_delta_time());
 }
 
-void render_character(const Character &character, const mat4 &cameraProjView, vec3 cameraPosition, const DirectionLight &light)
+void render_character(
+  const Character &character, 
+  const mat4 &cameraProjView,
+  vec3 cameraPosition, 
+  const DirectionLight &light)
 {
-  switch (scene->rmode) {
-  case RMODE_REGULAR:
-  {
-    const Material &material = *character.material;
-    const Shader &shader = material.get_shader();
+  const Material &material = *character.material;
+  const Shader &shader = material.get_shader();
 
-    shader.use();
-    material.bind_uniforms_to_shader();
-    shader.set_mat4x4("Transform", character.transform);
-    shader.set_mat4x4("ViewProjection", cameraProjView);
-    shader.set_vec3("CameraPosition", cameraPosition);
-    shader.set_vec3("LightDirection", glm::normalize(light.lightDirection));
-    shader.set_vec3("AmbientLight", light.ambient);
-    shader.set_vec3("SunLight", light.lightColor);
+  shader.use();
+  material.bind_uniforms_to_shader();
+  shader.set_mat4x4("Transform", character.transform);
+  shader.set_mat4x4("ViewProjection", cameraProjView);
+  shader.set_vec3("CameraPosition", cameraPosition);
+  shader.set_vec3("LightDirection", glm::normalize(light.lightDirection));
+  shader.set_vec3("AmbientLight", light.ambient);
+  shader.set_vec3("SunLight", light.lightColor);
 
-    render(*character.mesh);
-  } break;
+  render(*character.mesh);
+}
 
-  case RMODE_BONES:
-  {
-    const Shader &bonesShader = bones_material->get_shader();
-    const Shader &axesShader = axes_material->get_shader();
+void render_skeleton(
+  const Character &character, 
+  const mat4 &cameraProjView,
+  vec3 cameraPosition, 
+  const DirectionLight &light)
+{
+  const Shader &bonesShader = bones_material->get_shader();
+  const Shader &axesShader = axes_material->get_shader();
 
-    bonesShader.use();
-    bones_material->bind_uniforms_to_shader();
-    bonesShader.bind_ssbo(character.skeleton->boneRootTransformsSSBO, 0);
-    bonesShader.set_mat4x4("RootTransform", character.transform);
-    bonesShader.set_mat4x4("ViewProjection", cameraProjView);
-    bonesShader.set_vec3("CameraPosition", cameraPosition);
-    bonesShader.set_vec3("LightDirection", glm::normalize(light.lightDirection));
-    bonesShader.set_vec3("AmbientLight", light.ambient);
-    bonesShader.set_vec3("SunLight", light.lightColor);
+  bonesShader.use();
+  bones_material->bind_uniforms_to_shader();
+  bonesShader.bind_ssbo(character.skeleton->boneRootTransformsSSBO, 0);
+  bonesShader.set_mat4x4("RootTransform", character.transform);
+  bonesShader.set_mat4x4("ViewProjection", cameraProjView);
+  bonesShader.set_vec3("CameraPosition", cameraPosition);
+  bonesShader.set_vec3("LightDirection", glm::normalize(light.lightDirection));
+  bonesShader.set_vec3("AmbientLight", light.ambient);
+  bonesShader.set_vec3("SunLight", light.lightColor);
 
-    render_instanced(*bone_mesh, character.skeleton->bones.size());
+  render_instanced(*bone_mesh, character.skeleton->bones.size());
 
-    axesShader.use();
-    axes_material->bind_uniforms_to_shader();
-    axesShader.bind_ssbo(character.skeleton->boneOffsetsSSBO, 0);
-    axesShader.set_mat4x4("RootTransform", character.transform);
-    axesShader.set_mat4x4("ViewProjection", cameraProjView);
+  axesShader.use();
+  axes_material->bind_uniforms_to_shader();
+  axesShader.bind_ssbo(character.skeleton->boneOffsetsSSBO, 0);
+  axesShader.set_mat4x4("RootTransform", character.transform);
+  axesShader.set_mat4x4("ViewProjection", cameraProjView);
 
-    render_instanced(*axes_mesh, character.skeleton->bones.size(), LINES);
-  } break;
-
-  default:
-    break;
-  }
+  render_instanced(*axes_mesh, character.skeleton->bones.size(), LINES);
 }
 
 void game_render()
@@ -216,11 +206,21 @@ void game_render()
   glClearColor(grayColor, grayColor, grayColor, 1.f);
   glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-
   const mat4 &projection = scene->userCamera.projection;
   const glm::mat4 &transform = scene->userCamera.transform;
   mat4 projView = projection * inverse(transform);
 
   for (const Character &character : scene->characters)
     render_character(character, projView, glm::vec3(transform[3]), scene->light);
+
+  if (scene->renderBones)
+  {
+    // @HACK(PKiyashko): this is not a good way of rendering skeletons over meshes. If
+    //                   we were rendering a complex scene, the skeletons would be seen through walls
+    //                   and what not. Even if we did a wireframe skeleton, there would still be this
+    //                   problem. The only adquate solution I can think of would be stencil tests.
+    glClear(GL_DEPTH_BUFFER_BIT);
+    for (const Character &character : scene->characters)
+      render_skeleton(character, projView, glm::vec3(transform[3]), scene->light);
+  }
 }
