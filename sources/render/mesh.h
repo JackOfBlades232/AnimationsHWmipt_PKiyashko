@@ -27,6 +27,8 @@ struct Skeleton
 {
   struct Bone
   {
+    glm::mat4 localTransform;
+    glm::mat4 inverseBindPose;
     Bone *parent;
     std::string name;
     size_t id;
@@ -36,15 +38,22 @@ struct Skeleton
   Bone root;
 
   // @TODO(PKiyashko): replace with UBOs. These are not that big)
-  std::vector<glm::mat4> boneLocalTransforms;
-  GLuint boneLocalTransformsSSBO{0};
-  std::vector<glm::mat4> boneRootTransforms;
-  GLuint boneRootTransformsSSBO{0};
-  std::vector<glm::mat4> boneOffsets;
-  GLuint boneOffsetsSSBO{0};
+  // @TODO(PKiyashko): All but the first buffer are only used in debug skeleton drawing.
+  //                   I should separate them out, maybe into another struct.
+
+  // these are the matrices used in skinning, = boneGlobalTransform * invBindPoseMatrix
+  std::vector<glm::mat4> boneMatrices;
+  GLuint boneMatricesSSBO{0};
+
+  // these are global (in mesh space) bone transforms
+  std::vector<glm::mat4> boneTransforms;
+  GLuint boneTransformsSSBO{0};
+  // these are transforms for instanced drawing of debug skeleton (mesh-space transforms of parent->bone arrows)
+  std::vector<glm::mat4> debugBoneTransforms;
+  GLuint debugBoneTransformsSSBO{0};
 
   Skeleton() = default;
-  Skeleton(Span<aiBone *> a_bones, GLuint a_loct_ssbo, GLuint a_tf_ssbo, GLuint a_p_ssbo);
+  Skeleton(Span<aiBone *> a_bones, GLuint a_t_ssbo, GLuint a_tf_ssbo, GLuint a_p_ssbo);
 
   size_t GetBoneId(const char *bone_name) const
   {
@@ -59,8 +68,8 @@ struct Skeleton
   void SetBoneTransform(size_t bone_id, glm::mat4 transform)
   {
     // @TODO(PKiyashko): more graceful logging on invalid bone_id (or wrong bone name)
-    assert(bone_id < boneLocalTransforms.size());
-    boneLocalTransforms[bone_id] = transform;
+    assert(bone_id < bones.size());
+    bones[bone_id].localTransform = transform;
   }
   void SetBoneTransform(const char *bone_name, glm::mat4 transform) 
     { SetBoneTransform(GetBoneId(bone_name), transform); }
@@ -68,8 +77,8 @@ struct Skeleton
   void ApplyTransformToBone(size_t bone_id, glm::mat4 transform) 
   {
     // @TODO(PKiyashko): more graceful logging on invalid bone_id (or wrong bone name)
-    assert(bone_id < boneLocalTransforms.size());
-    boneLocalTransforms[bone_id] = transform * boneLocalTransforms[bone_id];
+    assert(bone_id < bones.size());
+    bones[bone_id].localTransform = transform * bones[bone_id].localTransform;
   }
   void ApplyTransformToBone(const char *bone_name, glm::mat4 transform) 
     { ApplyTransformToBone(GetBoneId(bone_name), transform); }

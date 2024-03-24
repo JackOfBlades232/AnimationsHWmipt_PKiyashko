@@ -24,7 +24,7 @@ struct Scene
 {
   DirectionLight light;
   UserCamera userCamera;
-  bool renderBones;
+  bool renderDebugSkeleton;
 
   std::vector<Character> characters;
 };
@@ -93,7 +93,7 @@ void game_init()
 
   scene->userCamera.projection = glm::perspective(90.f * DegToRad, get_aspect_ratio(), 0.01f, 500.f);
 
-  scene->renderBones = false;
+  scene->renderDebugSkeleton = false;
 
   ArcballCamera &cam = scene->userCamera.arcballCamera;
   cam.curZoom = cam.targetZoom = 0.5f;
@@ -113,7 +113,7 @@ void game_init()
   input.onMouseWheelEvent += [](const SDL_MouseWheelEvent &e) { arccam_mouse_wheel_handler(e, scene->userCamera.arcballCamera); };
   input.onKeyboardEvent += [](const SDL_KeyboardEvent &e) {
       if (e.keysym.sym == SDLK_q && e.state == SDL_RELEASED && e.repeat == 0)
-        scene->renderBones = !scene->renderBones;
+        scene->renderDebugSkeleton = !scene->renderDebugSkeleton;
     };
 
   add_shader_include("/lighting.frag.inc", ROOT_PATH"sources/shaders/lighting.frag.inc");
@@ -197,7 +197,7 @@ void render_character(
 
   shader.use();
   material.bind_uniforms_to_shader();
-  shader.bind_ssbo(character.skeleton->boneOffsetsSSBO, 0);
+  shader.bind_ssbo(character.skeleton->boneMatricesSSBO, 0);
   shader.set_mat4x4("Transform", character.transform);
   shader.set_mat4x4("ViewProjection", cameraProjView);
   shader.set_vec3("CameraPosition", cameraPosition);
@@ -208,7 +208,7 @@ void render_character(
   render(*character.mesh);
 }
 
-void render_skeleton(
+void render_debug_skeleton(
   const Character &character, 
   const mat4 &cameraProjView,
   vec3 cameraPosition, 
@@ -219,7 +219,7 @@ void render_skeleton(
 
   bonesShader.use();
   bones_material->bind_uniforms_to_shader();
-  bonesShader.bind_ssbo(character.skeleton->boneRootTransformsSSBO, 0);
+  bonesShader.bind_ssbo(character.skeleton->debugBoneTransformsSSBO, 0);
   bonesShader.set_mat4x4("RootTransform", character.transform);
   bonesShader.set_mat4x4("ViewProjection", cameraProjView);
   bonesShader.set_vec3("CameraPosition", cameraPosition);
@@ -231,7 +231,7 @@ void render_skeleton(
 
   axesShader.use();
   axes_material->bind_uniforms_to_shader();
-  axesShader.bind_ssbo(character.skeleton->boneOffsetsSSBO, 0);
+  axesShader.bind_ssbo(character.skeleton->boneTransformsSSBO, 0);
   axesShader.set_mat4x4("RootTransform", character.transform);
   axesShader.set_mat4x4("ViewProjection", cameraProjView);
 
@@ -259,7 +259,7 @@ void game_render()
   for (const Character &character : scene->characters)
     render_character(character, projView, glm::vec3(transform[3]), scene->light);
 
-  if (scene->renderBones)
+  if (scene->renderDebugSkeleton)
   {
     // @HACK(PKiyashko): this is not a good way of rendering skeletons over meshes. If
     //                   we were rendering a complex scene, the skeletons would be seen through walls
@@ -267,6 +267,6 @@ void game_render()
     //                   problem. The only adquate solution I can think of would be stencil tests.
     glClear(GL_DEPTH_BUFFER_BIT);
     for (const Character &character : scene->characters)
-      render_skeleton(character, projView, glm::vec3(transform[3]), scene->light);
+      render_debug_skeleton(character, projView, glm::vec3(transform[3]), scene->light);
   }
 }
